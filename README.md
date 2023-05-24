@@ -21,7 +21,7 @@ This repository is organized as follows:
 - The folder `src` contains the Python source file that defines the components of the DURENDAL architecture. You can import this Python file into your projects to create your own DURENDAL model for your prediction task.
 - The folders `gdelt18`, `icews18`, `taobaoth`, and `steemitth` contain the code to reproduce the experiments and perform the data preprocessing steps for each dataset. The experiments are described in jupyter notebooks. The py files in these folders contain the code to obtain the datasets and the definition of the custom DURENDAL and baseline models to perform the specific future link prediction task.
 - The folder `repurposing` contains the code to reproduce the experiments on the effectiveness of the DURENDAL model design. Experiments are described in the jupyter notebook while the Python file contains the ready-to-use DURENDAL repurposed architectures.
-- The file `appendix.pdf` reports information concerning training details, model architecture, hw resources, and computational time for individual experiments.
+- The file `supplementary-information.pdf` reports information concerning training details, model architecture, hardware resources, and computational time for individual experiments.
 
 ## Dataset
 We conducted the experimental evaluation of the framework over four temporal heterogeneous network datasets on future link prediction tasks. 
@@ -40,7 +40,7 @@ Note that the code to run the experiments is the same for all the datasets; ther
 Note also that results related to the `SteemitTH` dataset may be different from the one presented in the paper since we do not include textual features, which we can not release to be compliant with IRB. Textual features are available upon request.
 
 ## Additional information
-For information concerning training details, model architecture, hardware resources, and computational time for individual experiments, please see the `appendix.pdf` file.
+For information concerning training details, model architecture, hardware resources, and computational time for individual experiments, please see the `supplementary-information.pdf` file.
 
 ## Contact
 For any clarification or further information please do not hesitate to contact name dot surname at the institution.
