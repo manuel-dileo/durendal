@@ -1,5 +1,5 @@
 # Durendal
-Roland-based graph deep learning framework for temporal heterogeneous networks. Submitted @ ICLR2024
+Graph deep learning framework for temporal heterogeneous networks. Submitted @ ICLR2024
 
 ## Table of Contents
 
