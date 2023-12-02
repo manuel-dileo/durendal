@@ -32,7 +32,7 @@ For `GDELT18`, `ICEWS18`, and `TaobaoTH`, we download the source data from the [
 For `SteemitTH`, we collect the data using the [Steemit API](https://developers.steem.io/). Due to privacy reasons on personal data like usernames and textual content, we can't release the dataset. To patch this problem, we provide an anonymized version of our data. This version represents the final mathematical objects that are used to feed the models. To be compliant with IRB, we publicly release the heterogenous network of Steemit without text-based features but features will be available upon request. Note that performing future link prediction on SteemitTH without node features may lead to different results compared to the one described in the paper. Further details about data gathering and preprocessing for SteemitTH can be found in the data-related concerns section of the paper and in the supplementary information.
 
 ## Experiments
-To reproduce the experiments described in the paper you can run the notebooks contained in the folder dedicated to each dataset. The experiments related to the effectiveness of model design are reported in the `repurposing` folder. The experiments related to the multirelation future link prediction task are reported in the `multirelaitonal` folder. 
+To reproduce the experiments described in the paper you can run the notebooks contained in the folder dedicated to each dataset. The experiments related to the effectiveness of model design are reported in the `repurposing` folder. The experiments related to the multirelational future link prediction task are reported in the `multirelational` folder. 
 
 Note that the code to run the experiments is the same for all the datasets; there are small changes just related to relation and model names. To inspect an annotated version of the work, you can refer to code and notebooks in the `steemitth` folder. 
 
@@ -42,4 +42,4 @@ Note also that results related to the `SteemitTH` dataset may be different from 
 For information concerning training details, model architecture, hardware resources, and computational time for individual experiments, please read the paper and its appendix.
 
 ## Contact
-For any clarification or further information please do not hesitate to contact name dot surname at the institution.
+For any clarification or further information please do not hesitate to contact me.
