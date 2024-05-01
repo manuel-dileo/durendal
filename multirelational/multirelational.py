@@ -2,6 +2,7 @@ import torch
 import torch.nn.functional as F
 from torch_geometric.data import Data, HeteroData
 from torch_geometric.datasets import GDELT, ICEWS18
+from torch.nn import RReLU, Flatten
 
 from torch_geometric_temporal.nn.recurrent import GConvGRU,  EvolveGCNH
 
@@ -27,11 +28,14 @@ sys.path.insert(1, '../src')
 
 from durendal import *
 
-from torch_geometric.nn import GCNConv, GATv2Conv, Linear, HANConv, HeteroConv
+from torch_geometric.nn import GCNConv, GATConv, GATv2Conv, Linear, HANConv, HeteroConv, SAGEConv
 from torch_geometric.nn import ComplEx
+from torch.nn import GRUCell, Conv1d
+
+from torch_geometric.nn.inits import glorot
 
 
-def get_gdelt_dataset():
+def get_gdelt_dataset(use_random_features=False):
     dataset = GDELT(root='GDELT/')
     #num_rel = len(set([int(data.rel) for data in dataset]))
     num_rel = 238
@@ -69,7 +73,10 @@ def get_gdelt_dataset():
         if isnap==last_snap:
             for edge_t, edge_index in edge_index_dict.items():
                 snap[edge_t].edge_index = torch.Tensor(edge_index).long()
-            snap['node'].x = torch.Tensor([[1] for i in range(max_node)])
+            if use_random_features:
+                snap['node'].x = torch.randn(max_node,1)
+            else:
+                snap['node'].x = torch.Tensor([[1] for i in range(max_node)])
             snapshots.append(snap)
             break
     
@@ -79,12 +86,15 @@ def get_gdelt_dataset():
         for edge_t, edge_index in edge_index_dict.items():
             snap[edge_t].edge_index = torch.Tensor(edge_index).long()
             #if len(snap.edge_index_dict) > 10: break
-        snap['node'].x = torch.Tensor([[1] for i in range(max_node)])
+        if use_random_features:
+            snap['node'].x = torch.randn(max_node,1)
+        else:
+            snap['node'].x = torch.Tensor([[1] for i in range(max_node)])
         snapshots.append(snap)
         isnap+=1
     return snapshots
 
-def get_icews_dataset():
+def get_icews_dataset(use_random_features=False):
     dataset = ICEWS18(root='ICEWS18/')
     #num_rel = len(set([int(data.rel) for data in dataset]))
     num_rel = 251
@@ -121,14 +131,43 @@ def get_icews_dataset():
         if t==last_snap-1:
             for edge_t, edge_index in edge_index_dict.items():
                 snap[edge_t].edge_index = torch.Tensor(edge_index).long()
-            snap['node'].x = torch.Tensor([[1] for enc in range(max_node)])
+            if use_random_features:
+                snap['node'].x = torch.randn(max_node,1)
+            else:
+                snap['node'].x = torch.Tensor([[1] for enc in range(max_node)])
             snapshots.append(snap)
             break
     
         if t%30!=0 or t<60: continue
         for edge_t, edge_index in edge_index_dict.items():
             snap[edge_t].edge_index = torch.Tensor(edge_index).long()
-        snap['node'].x = snap['node'].x = torch.Tensor([[1] for enc in range(max_node)])
+        if use_random_features:
+            snap['node'].x = torch.randn(max_node,1)
+        else:
+            snap['node'].x = torch.Tensor([[1] for enc in range(max_node)])
+        snapshots.append(snap)
+    return snapshots
+
+def get_steemit_dataset(use_random_features=False):
+    x = torch.load('../steemitth/steemitth-data/x.pt')
+    if use_random_features:
+        nuser = x.size(0)
+        x = torch.randn(nuser,1)
+    
+    edges = [('node','follow','node'),\
+          ('node','comment','node'),\
+          ('node','vote','node'),\
+          ('node','transaction','node'),\
+            ]
+    
+    snapshots = []
+    #for each snap initialize node feature matrix and load the four edge_index
+    for isnap in range(0,5):
+        snap = HeteroData()
+        snap['node'].x = x
+        for edge_t in edges:
+            edge_index = torch.load(f'../steemitth/steemitth-data/{isnap}_{edge_t}.pt')
+            snap[edge_t].edge_index = edge_index.long()
         snapshots.append(snap)
     return snapshots
 
@@ -136,6 +175,9 @@ def triple_dot(x: Tensor, y: Tensor, z: Tensor) -> Tensor:
     return (x * y * z).sum(dim=-1)
 
 class RDurendal(torch.nn.Module):
+    """
+        Durendal update-then-aggregate for multirelational link prediction task.
+    """
     def __init__(
         self,
         in_channels,
@@ -149,13 +191,13 @@ class RDurendal(torch.nn.Module):
         #self.update1 = SemanticUpdateWA(n_channels=hidden_conv_1, tau=0.1)
         self.update1 = SemanticUpdateGRU(n_channels=hidden_conv_1)
         #self.update1 = SemanticUpdateMLP(n_channels=hidden_conv_1)
-        self.agg1 = SemanticAggregation(n_channels=hidden_conv_1)
+        self.agg1 = SemanticAttention(n_channels=hidden_conv_1)
         
         self.conv2 = DurendalConv(hidden_conv_1, hidden_conv_2, metadata)
         #self.update2 = SemanticUpdateWA(n_channels=hidden_conv_2, tau=0.1)
         self.update2 = SemanticUpdateGRU(n_channels=hidden_conv_2)
         #self.update2 = SemanticUpdateMLP(n_channels=hidden_conv_2)
-        self.agg2 = SemanticAggregation(n_channels=hidden_conv_2)
+        self.agg2 = SemanticAttention(n_channels=hidden_conv_2)
         
         self.post = Linear(hidden_conv_2, 2)
             
@@ -242,6 +284,9 @@ class RDurendal(torch.nn.Module):
         return self.loss_fn(pred, link_label)
     
 class RATU(torch.nn.Module):
+    """
+        Durendal aggregate-then-update for multirelational link prediction task.
+    """
     def __init__(
         self,
         in_channels,
@@ -252,12 +297,12 @@ class RATU(torch.nn.Module):
     ):
         super(RATU, self).__init__()
         self.conv1 = DurendalConv(in_channels, hidden_conv_1, metadata)
-        self.agg1 = SemanticAggregation(n_channels=hidden_conv_1)
+        self.agg1 = SemanticAttention(n_channels=hidden_conv_1)
         self.update1 = HetNodeUpdateGRU(hidden_conv_1, metadata)
         
         
         self.conv2 = DurendalConv(hidden_conv_1, hidden_conv_2, metadata)
-        self.agg2 = SemanticAggregation(n_channels=hidden_conv_2)
+        self.agg2 = SemanticAttention(n_channels=hidden_conv_2)
         self.update2 = HetNodeUpdateGRU(hidden_conv_2, metadata)
         
         self.post = Linear(hidden_conv_2, 2)
@@ -298,7 +343,7 @@ class RATU(torch.nn.Module):
             current_dict_1 = self.update1(out_dict, self.past_out_dict_1)
         self.past_out_dict_1 = current_dict_1.copy()
         
-        out_dict = self.conv2(out_dict, edge_index_dict)
+        out_dict = self.conv2(current_dict_1, edge_index_dict)
         out_dict = self.agg2(out_dict)
         if snap==0:
             current_dict_2 = out_dict.copy()
@@ -306,6 +351,7 @@ class RATU(torch.nn.Module):
             current_dict_2 = out_dict.copy()
             current_dict_2 = self.update2(out_dict, self.past_out_dict_2)
         self.past_out_dict_2 = current_dict_2.copy()
+        out_dict = current_dict_2.copy()
         
         out_dict_iter = out_dict.copy()
         for node, h in out_dict_iter.items():
@@ -343,6 +389,349 @@ class RATU(torch.nn.Module):
     
     def loss(self, pred, link_label):
         return self.loss_fn(pred, link_label)
+
+#Below, Temporal Heterogeneous GNN mapped in the DURENDAL framework
+class DyHAN(torch.nn.Module):
+    """
+        DyHAN model (https://www.ncbi.nlm.nih.gov/pmc/articles/PMC7148053/).
+        DyHAN utilizies edge-level and semantic-level attention -> HANConv
+        Then, DyHAN leverages temporal-attention to combine node embeddings over time
+        It can be reconducted to DURENDAL, following aggregate-then-update schema:
+            GNN Encoder: GAT
+            Semantic Aggregation: Semantic Attention (HAN)
+            Embedding update: Temporal Attention
+    """
+    def __init__(
+        self,
+        in_channels,
+        num_nodes,
+        metadata: Metadata,
+        hidden_conv_1,
+        hidden_conv_2,
+    ):
+        super(DyHAN, self).__init__()
+        self.conv1 = HANConv(in_channels, hidden_conv_1, metadata)
+        self.update1 = HetNodeUpdateTA(hidden_conv_1, metadata)
+        
+        
+        self.conv2 = HANConv(hidden_conv_1, hidden_conv_2, metadata)
+        self.update2 = HetNodeUpdateTA(hidden_conv_2, metadata)
+        
+        self.post = Linear(hidden_conv_2, 2)
+            
+        self.past_out_dict_1 = None
+        self.past_out_dict_2 = None
+        
+        self.loss_fn = BCEWithLogitsLoss()
+        
+        self.metadata = metadata
+        
+        self.reset_parameters()
+    
+    def reset_parameters(self):
+        self.conv1.reset_parameters()
+        self.conv2.reset_parameters()
+        self.update1.reset_parameters()
+        self.update2.reset_parameters()
+        self.post.reset_parameters()
+    
+    def forward(self, x_dict, edge_index_dict, data, snap, past_out_dict_1=None, past_out_dict_2=None):
+        
+        if past_out_dict_1 is not None:
+            self.past_out_dict_1 = past_out_dict_1.copy()
+        if past_out_dict_2 is not None:
+            self.past_out_dict_2 = past_out_dict_2.copy()
+            
+        out_dict = self.conv1(x_dict, edge_index_dict)
+        if snap==0:
+            current_dict_1 = out_dict.copy()
+        else: 
+            current_dict_1 = out_dict.copy()
+            current_dict_1 = self.update1(out_dict, self.past_out_dict_1)
+        self.past_out_dict_1 = current_dict_1.copy()
+        
+        out_dict = self.conv2(current_dict_1, edge_index_dict)
+        if snap==0:
+            current_dict_2 = out_dict.copy()
+        else:
+            current_dict_2 = out_dict.copy()
+            current_dict_2 = self.update2(out_dict, self.past_out_dict_2)
+        self.past_out_dict_2 = current_dict_2.copy()
+        
+        out_dict = None
+        
+        #DotProduct followed by LogisticRegression as decoder (following the original paper)
+        h_dict = dict()
+        for edge_t in self.metadata[1]:
+            edge_label_index = data[edge_t].edge_label_index
+            
+            head = current_dict_2[edge_t[0]][edge_label_index[0]] #embedding src nodes
+            tail = current_dict_2[edge_t[2]][edge_label_index[1]] #embedding dst nodes
+            
+            dot_product = torch.mul(head, tail)
+            h = self.post(dot_product)
+            h = torch.sigmoid(torch.sum(h.clone(), dim=-1))
+            h_dict[edge_t] = h
+        
+        return h_dict, current_dict_1, current_dict_2
+    
+    def loss(self, pred, link_label):
+        return self.loss_fn(pred, link_label)
+
+
+class HTGNN(torch.nn.Module):
+    """
+        HTGNN model (https://dl.acm.org/doi/pdf/10.1145/3583780.3614909).
+        HTGNN utilizies edge-level attention -> GAT
+                        semantic-level attention -> HAN with attention coefficient following GATv2
+                        positional encoding for temporal node embedding
+        It can be reconducted to DURENDAL, following aggregate-then-update schema:
+            GNN Encoder: GAT
+            Semantic Aggregation: Semantic Attention (From GATv2)
+            Embedding update: PE (PositionalEncoding) + Temporal Aggregation
+    """
+
+    def __init__(
+            self,
+            in_channels,
+            in_channels_int,
+            num_nodes,
+            metadata: Metadata,
+            hidden_conv_1,
+            hidden_conv_2,
+    ):
+        super(HTGNN, self).__init__()
+        self.conv1 = DurendalGATConv(in_channels, hidden_conv_1, metadata) #GAT for intra-relation (see original paper)
+        self.agg1 = SemanticAttention(n_channels=hidden_conv_1, v2=True) #Semantic attention for inter-relation
+        self.update1 = HetNodeUpdatePE(hidden_conv_1, metadata) #PE followed by temporal attention
+        self.lin1 = Linear(in_channels_int, hidden_conv_1) #Linear layer for weighted skip-connection
+        self.delta1 = torch.nn.Parameter(torch.Tensor([1])) #weight for skip-connection
+
+        self.conv2 = DurendalGATConv(hidden_conv_1, hidden_conv_2, metadata)
+        self.agg2 = SemanticAttention(n_channels=hidden_conv_2, v2=True)
+        self.update2 = HetNodeUpdatePE(hidden_conv_2, metadata)
+        self.lin2 = Linear(hidden_conv_1, hidden_conv_2)
+        self.delta2 = torch.nn.Parameter(torch.Tensor([1]))
+
+        self.post = Linear(hidden_conv_2 * 2, 2)
+
+        self.past_out_dict_1 = None
+        self.past_out_dict_2 = None
+
+        self.loss_fn = BCEWithLogitsLoss()
+
+        self.metadata = metadata
+
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        self.conv1.reset_parameters()
+        self.conv2.reset_parameters()
+        self.update1.reset_parameters()
+        self.update2.reset_parameters()
+        self.agg1.reset_parameters()
+        self.agg2.reset_parameters()
+        self.post.reset_parameters()
+        self.lin1.reset_parameters()
+        self.lin2.reset_parameters()
+
+    def forward(self, x_dict, edge_index_dict, data, snap, past_out_dict_1=None, past_out_dict_2=None):
+
+        if past_out_dict_1 is not None:
+            self.past_out_dict_1 = past_out_dict_1.copy()
+        if past_out_dict_2 is not None:
+            self.past_out_dict_2 = past_out_dict_2.copy()
+
+        x_dict_lin = {node: self.lin1(x) for node,x in x_dict.items()}
+        out_dict = self.conv1(x_dict, edge_index_dict)
+        out_dict = self.agg1(out_dict)
+        if snap == 0:
+            current_dict_1 = out_dict.copy()
+        else:
+            current_dict_1 = out_dict.copy()
+            current_dict_1 = self.update1(out_dict, self.past_out_dict_1)
+        current_dict_1 = {node: (self.delta1 * current_dict_1[node] + (1-self.delta1) * x_dict_lin[node]) for node in x_dict_lin}
+        self.past_out_dict_1 = current_dict_1.copy()
+
+        x_dict_lin = {node: self.lin2(x) for node,x in current_dict_1.items()}
+        out_dict = self.conv2(current_dict_1, edge_index_dict)
+        out_dict = self.agg2(out_dict)
+        if snap == 0:
+            current_dict_2 = out_dict.copy()
+        else:
+            current_dict_2 = out_dict.copy()
+            current_dict_2 = self.update2(out_dict, self.past_out_dict_2)
+        current_dict_2 = {node: (self.delta2 * current_dict_2[node] + (1-self.delta2) * x_dict_lin[node]) for node in x_dict_lin}
+        self.past_out_dict_2 = current_dict_2.copy()
+
+        out_dict = None
+
+        # ConcatMLP as decoder (following the original paper)
+        h_dict = dict()
+        for edge_t in self.metadata[1]:
+            edge_label_index = data[edge_t].edge_label_index
+
+            head = current_dict_2[edge_t[0]][edge_label_index[0]]  # embedding src nodes
+            tail = current_dict_2[edge_t[2]][edge_label_index[1]]  # embedding dst nodes
+
+            concat = torch.cat((head, tail), dim=1)
+            h = self.post(concat)
+            h_dict[edge_t] = torch.sum(h, dim=-1)
+
+        return h_dict, current_dict_1, current_dict_2
+
+    def loss(self, pred, link_label):
+        return self.loss_fn(pred, link_label)
+
+#Below, Temporal Heterogeneous GNN mapped in the DURENDAL framework
+class REGCN(torch.nn.Module):
+    """
+        RE-GCN model (https://dl.acm.org/doi/10.1145/3404835.3462963).
+        RE-GCN utilizies a relational GCN as node-encoder -> RGCN
+        Then, it leverages a time-gate to combine node embeddings over time.
+        Furthermore, it utilizies representations for relations as
+            1a) The mean pooling of the node embeddings involved in the relation
+            1b) Random inizialized learnable parameters
+            1) concatenation between 1a and 1b
+            2) Update over time using a GRU unit
+        It can be reconducted to DURENDAL, following aggregate-then-update schema:
+            GNN Encoder: GCN
+            Semantic Aggregation: R-GCN aggregation
+            Embedding update: Time-Gate / GRU
+    """
+    def __init__(
+            self,
+            in_channels,
+            num_nodes,
+            metadata: Metadata,
+            hidden_conv_1,
+            hidden_conv_2,
+            output_conv
+    ):
+        super(REGCN, self).__init__()
+        #RGCN using HeteroConv with SAGEConv + mean aggregation
+        #As suggested in: https://github.com/pyg-team/pytorch_geometric/discussions/3479
+        self.conv1 = HeteroConv({edge_t: SAGEConv((in_channels, in_channels), hidden_conv_1, \
+                                                  add_self_loops=False) for edge_t in metadata[1]},
+                                aggr='mean')
+        self.update1 = HetNodeUpdateGate(hidden_conv_1, metadata)
+
+
+        self.conv2 = HeteroConv({edge_t: SAGEConv((hidden_conv_1, hidden_conv_1), hidden_conv_2, \
+                                                  add_self_loops=False) for edge_t in metadata[1]},
+                                aggr='mean')
+        self.update2 = HetNodeUpdateGate(hidden_conv_2, metadata)
+
+        self.rel_emb = torch.nn.Parameter(torch.randn(len(metadata[1]), hidden_conv_2))
+        self.rel_to_index = {rel:i for i,rel in enumerate(metadata[1])}
+        self.update_rel = GRUCell(hidden_conv_2*2, hidden_conv_2)
+
+        self.act = RReLU()
+        self.flat = Flatten()
+
+        self.linr = Linear(hidden_conv_2*2, hidden_conv_2)
+
+        self.conv_h = Conv1d(in_channels=hidden_conv_2, out_channels=output_conv, kernel_size=1)
+        self.conv_r = Conv1d(in_channels=hidden_conv_2, out_channels=output_conv, kernel_size=1)
+        self.conv_t = Conv1d(in_channels=hidden_conv_2, out_channels=output_conv, kernel_size=1)
+
+        self.output_conv = output_conv
+        self.post = Linear(output_conv*3, 2)
+
+        self.past_out_dict_1 = None
+        self.past_out_dict_2 = None
+        self.past_R = None
+
+        self.loss_fn = BCEWithLogitsLoss()
+
+        self.metadata = metadata
+
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        self.conv1.reset_parameters()
+        self.conv2.reset_parameters()
+        self.update1.reset_parameters()
+        self.update2.reset_parameters()
+        self.linr.reset_parameters()
+        self.conv_h.reset_parameters()
+        self.conv_r.reset_parameters()
+        self.conv_t.reset_parameters()
+        self.post.reset_parameters()
+
+    def forward(self, x_dict, edge_index_dict, data, snap, past_out_dict_1=None, past_out_dict_2=None, past_R=None):
+
+        if past_out_dict_1 is not None:
+            self.past_out_dict_1 = past_out_dict_1.copy()
+        if past_out_dict_2 is not None:
+            self.past_out_dict_2 = past_out_dict_2.copy()
+        if past_R is not None:
+            self.past_R = past_R.clone()
+
+        out_dict = self.conv1(x_dict, edge_index_dict)
+        out_dict = {node: self.act(out) for node,out in out_dict.items()}
+        if snap==0:
+            current_dict_1 = out_dict.copy()
+        else:
+            current_dict_1 = out_dict.copy()
+            current_dict_1 = self.update1(out_dict, self.past_out_dict_1)
+        self.past_out_dict_1 = current_dict_1.copy()
+
+        out_dict = self.conv2(current_dict_1, edge_index_dict)
+        out_dict = {node: self.act(out) for node,out in out_dict.items()}
+        if snap==0:
+            current_dict_2 = out_dict.copy()
+        else:
+            current_dict_2 = out_dict.copy()
+            current_dict_2 = self.update2(out_dict, self.past_out_dict_2)
+        self.past_out_dict_2 = current_dict_2.copy()
+        out_dict = None
+
+        count_types = 0
+        for edge_type in self.metadata[1]:
+            rel_emb = self.rel_emb[self.rel_to_index[edge_type]].unsqueeze(0)
+            dst_type = edge_type[2]
+            avg_node = torch.mean(current_dict_2[dst_type][edge_index_dict[edge_type][1]], dim=0).unsqueeze(0)
+            r = torch.cat((avg_node, rel_emb),dim=1)
+            if count_types == 0:
+                R = r.clone()
+                count_types+=1
+            else:
+                R = torch.cat((R,r))
+        if snap==0:
+            current_R = self.linr(R).clone()
+        else:
+            current_R = torch.Tensor(self.update_rel(R, self.past_R).detach().numpy())
+        self.past_R = current_R.clone()
+
+
+        #ConvTransE as decoder (following the coriginal paper)
+        h_dict = dict()
+        flat = self.flat
+        out_conv = self.output_conv
+        for edge_t in self.metadata[1]:
+            edge_label_index = data[edge_t].edge_label_index
+            if edge_label_index[0].size(0) == 0:
+                h_dict[edge_t] = torch.Tensor([])
+                continue
+            head = current_dict_2[edge_t[0]][edge_label_index[0]]  # embedding src nodes
+            tail = current_dict_2[edge_t[2]][edge_label_index[1]]  # embedding dst nodes
+            rel = current_R[self.rel_to_index[edge_t]].unsqueeze(0)
+            #CONV
+            head_conv = self.conv_h(head.reshape(head.size(1),head.size(0))).reshape(head.size(0),out_conv)
+            tail_conv = self.conv_h(tail.reshape(tail.size(1),tail.size(0))).reshape(tail.size(0),out_conv)
+            rel_conv = self.conv_r(rel.reshape(rel.size(1),1)).reshape(rel.size(0),out_conv).repeat(head.size(0),1)
+
+            concat = torch.cat((flat(head_conv),flat(rel_conv),flat(tail_conv)),dim=1)
+            h = self.post(concat)
+            h_dict[edge_t] = torch.sum(h, dim=-1)
+
+        return h_dict, current_dict_1, current_dict_2, current_R
+
+    def loss(self, pred, link_label):
+        return self.loss_fn(pred, link_label)
+
+#Below, other GNN baselines
     
 class RHAN(torch.nn.Module):
     def __init__(
@@ -477,6 +866,8 @@ class RHEGCN(torch.nn.Module):
     def loss(self, pred, link_label):
         return self.loss_fn(pred, link_label)
     
+    
+#Below, Factorization-method baselines
 
 class ComplEx(torch.nn.Module):
     def __init__(
