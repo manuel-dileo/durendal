@@ -97,13 +97,13 @@ class GDELTDurendal(torch.nn.Module):
         #self.update1 = SemanticUpdateWA(n_channels=hidden_conv_1, tau=0.1)
         self.update1 = SemanticUpdateGRU(n_channels=hidden_conv_1)
         #self.update1 = SemanticUpdateMLP(n_channels=hidden_conv_1)
-        self.agg1 = SemanticAggregation(n_channels=hidden_conv_1)
+        self.agg1 = SemanticAttention(n_channels=hidden_conv_1)
         
         self.conv2 = DurendalConv(hidden_conv_1, hidden_conv_2, metadata)
         #self.update2 = SemanticUpdateWA(n_channels=hidden_conv_2, tau=0.1)
         self.update2 = SemanticUpdateGRU(n_channels=hidden_conv_2)
         #self.update2 = SemanticUpdateMLP(n_channels=hidden_conv_2)
-        self.agg2 = SemanticAggregation(n_channels=hidden_conv_2)
+        self.agg2 = SemanticAttention(n_channels=hidden_conv_2)
         
         self.post = Linear(hidden_conv_2, 2)
             
@@ -173,12 +173,12 @@ class GDELTATU(torch.nn.Module):
     ):
         super(GDELTATU, self).__init__()
         self.conv1 = DurendalConv(in_channels, hidden_conv_1, metadata)
-        self.agg1 = SemanticAggregation(n_channels=hidden_conv_1)
+        self.agg1 = SemanticAttention(n_channels=hidden_conv_1)
         self.update1 = HetNodeUpdateGRU(hidden_conv_1, metadata)
         
         
         self.conv2 = DurendalConv(hidden_conv_1, hidden_conv_2, metadata)
-        self.agg2 = SemanticAggregation(n_channels=hidden_conv_2)
+        self.agg2 = SemanticAttention(n_channels=hidden_conv_2)
         self.update2 = HetNodeUpdateGRU(hidden_conv_2, metadata)
         
         self.post = Linear(hidden_conv_2, 2)
