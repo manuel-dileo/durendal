@@ -35,8 +35,8 @@ For `SteemitTH`, we collect the data using the [Steemit API](https://developers.
 ## Experiments
 To reproduce the experiments described in the paper for the multirelational link prediction task you can run the following command:
 ```
-    cd multirelational/
-    python run.py --seed <seed_value> --dataset <dataset_name> --model <model_name>
+cd multirelational/
+python run.py --seed <seed_value> --dataset <dataset_name> --model <model_name>
 ```
 For the monorelational link prediction task, you can run the notebooks contained in the folder dedicated to each dataset. The experiments related to the effectiveness of model design are reported in the `repurposing` folder.
 
