@@ -20,8 +20,7 @@ We summarize our main contributions as follows: 1) we propose a novel graph deep
 This repository is organized as follows:
 - The folder `src` contains the Python source file that defines the components of our framework. You can import this Python file into your projects to create your own model for your prediction task.
 - The folders `gdelt18`, `icews18`, `taobaoth`, and `steemitth` contain the code to reproduce the monorelational experiments and perform the data preprocessing steps for each dataset. The experiments are described in jupyter notebooks. The py files in these folders contain the code to obtain the datasets and the definition of the custom DURENDAL and baseline models to perform the specific future link prediction task.
-- The folder `repurposing` contains the code to reproduce the experiments on the effectiveness of the framework design. Experiments are described in the jupyter notebook while the Python file contains the ready-to-use repurposed architectures.
-- The folder `multirelational` contains the code to reproduce the experiments on multirelational future link predictions. Experiments can be executed using the terminal. Python files contain the ready-to-use multirelational architectures and the training and evaluation code.
+- The folder `multirelational` contains the code to reproduce the experiments on multirelational future link predictions and the effectiveness of model design. Experiments can be executed using the terminal. Python files contain the ready-to-use multirelational architectures, the training and evaluation code, and the repurposed heterogeneous GNNs to a temporal setting.
 
 ## Dataset
 We conducted the experimental evaluation of the framework over four temporal heterogeneous network datasets on future link prediction tasks. 
@@ -38,7 +37,13 @@ To reproduce the experiments described in the paper for the multirelational link
 cd multirelational/
 python run.py --seed <seed_value> --dataset <dataset_name> --model <model_name>
 ```
-For the monorelational link prediction task, you can run the notebooks contained in the folder dedicated to each dataset. The experiments related to the effectiveness of model design are reported in the `repurposing` folder.
+To reproduce the experiments described in the paper for the effectiveness of model design you can run the following command:
+```
+cd multirelational/
+python repurpose.py --model <model_name> --update <update_function>
+```
+
+For the monorelational link prediction task, you can run the notebooks contained in the folder dedicated to each dataset.
 
 Note that the code to run the experiments is the same for all the datasets; there are small changes just related to relation and model names. To inspect an annotated version of the work, you can refer to code and notebooks in the `steemitth` folder. 
 
