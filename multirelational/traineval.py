@@ -550,6 +550,79 @@ def training_durendal_uta(snapshots, hidden_conv_1, hidden_conv_2, device='cpu')
     
     return
 
+def training_to_temporal(snapshots, hidden_conv_1, hidden_conv_2, model, upd, device='cpu'):
+    num_snap = len(snapshots)
+    hetdata = copy.deepcopy(snapshots[0])
+    edge_types = list(hetdata.edge_index_dict.keys())
+    
+    lr = 0.001
+    weight_decay = 5e-3
+    
+    in_channels = {node: len(v[0]) for node,v in hetdata.x_dict.items()}
+    num_nodes = {node: len(v) for node, v in hetdata.x_dict.items()}
+    
+    #DURENDAL
+    rep = HeteroToTemporal(in_channels, num_nodes, hetdata.metadata(), hidden_conv_1, hidden_conv_2, model, upd)
+    
+    rep.reset_parameters()
+    
+    repopt = torch.optim.Adam(params=rep.parameters(), lr=lr, weight_decay = weight_decay)
+    
+    
+    past_dict_1 = {}
+    for node in hetdata.x_dict.keys():
+        past_dict_1[node] = {}
+    for src,r,dst in hetdata.edge_index_dict.keys():
+        past_dict_1[src][r] = torch.Tensor([[0 for j in range(hidden_conv_1)] for i in range(hetdata[src].num_nodes)])
+        past_dict_1[dst][r] = torch.Tensor([[0 for j in range(hidden_conv_1)] for i in range(hetdata[dst].num_nodes)])
+        
+    past_dict_2 = {}
+    for node in hetdata.x_dict.keys():
+        past_dict_2[node] = {}
+    for src,r,dst in hetdata.edge_index_dict.keys():
+        past_dict_2[src][r] = torch.Tensor([[0 for j in range(hidden_conv_2)] for i in range(hetdata[src].num_nodes)])
+        past_dict_2[dst][r] = torch.Tensor([[0 for j in range(hidden_conv_2)] for i in range(hetdata[dst].num_nodes)])
+    
+    
+    rep_avgpr = 0
+    rep_mrr = 0
+    
+    for i in range(num_snap-1):
+        #CREATE TRAIN + VAL + TEST SET FOR THE CURRENT SNAP
+        snapshot = copy.deepcopy(snapshots[i])
+        
+        link_split = RandomLinkSplit(num_val=0.0, num_test=0.20, edge_types=edge_types)
+        
+        het_train_data, _, het_val_data = link_split(snapshot)
+     
+        het_test_data = copy.deepcopy(snapshots[i+1])
+        future_link_split = RandomLinkSplit(num_val=0, num_test=0, edge_types = edge_types) #useful only for negative sampling
+        het_test_data, _, _ = future_link_split(het_test_data)
+        
+        #TRAIN AND TEST THE MODEL FOR THE CURRENT SNAP
+        rep, rep_avgpr_test, rep_mrr_test , past_dict_1, past_dict_2, repopt =\
+            durendal_train_single_snapshot(rep, snapshot, i, het_train_data, het_val_data, het_test_data,\
+                                  past_dict_1, past_dict_2, repopt)
+        
+        #SAVE AND DISPLAY EVALUATION
+        print(f'Snapshot: {i}\n')
+        print(f'{model} {upd} AVGPR Test: {rep_avgpr_test} \n MRR Test: {rep_mrr_test}\n')
+        rep_avgpr += rep_avgpr_test
+        rep_mrr += rep_mrr_test
+        
+        gc.collect()
+        
+        
+    rep_avgpr_all = rep_avgpr / (num_snap-1)
+    rep_mrr_all = rep_mrr / (num_snap-1)
+    
+    print(f'{model} {upd}')
+    print(f'\tAVGPR over time: Test: {rep_avgpr_all}')
+    print(f'\tMRR over time: Test: {rep_mrr_all}')
+    print()
+    
+    return rep_avgpr_all, rep_mrr_all
+
 def training_dyhan(snapshots, hidden_conv_1, hidden_conv_2, device='cpu'):
     num_snap = len(snapshots)
     hetdata = copy.deepcopy(snapshots[0])

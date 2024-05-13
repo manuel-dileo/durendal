@@ -487,6 +487,25 @@ class HetNodeUpdateGate(MessagePassing):
             gc.collect()
         return out_dict
     
+class HetNodeUpdateFake(MessagePassing):
+    """
+    Implementation of a fake temporal update embedding module that 
+    do nothing and just forward the current embeddings in output.
+    """
+    def __init__(
+            self,
+            in_channels,
+            metadata,
+            **kwargs
+    ):
+        super(HetNodeUpdateFake, self).__init__()
+
+
+    def reset_parameters(self): pass
+
+    def forward(self, current_in_dict, past_in_dict):
+        return current_in_dict
+    
 #Below, aggregation functions at semantic level:
 class SemanticAttention(MessagePassing):
     """

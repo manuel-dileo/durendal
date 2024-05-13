@@ -28,7 +28,7 @@ sys.path.insert(1, '../src')
 
 from durendal import *
 
-from torch_geometric.nn import GCNConv, GATConv, GATv2Conv, Linear, HANConv, HeteroConv, SAGEConv
+from torch_geometric.nn import GCNConv, GATConv, GATv2Conv, Linear, HANConv, HeteroConv, SAGEConv, HGTConv
 from torch_geometric.nn import ComplEx
 from torch.nn import GRUCell, Conv1d
 
@@ -396,7 +396,8 @@ class DyHAN(torch.nn.Module):
         DyHAN model (https://www.ncbi.nlm.nih.gov/pmc/articles/PMC7148053/).
         DyHAN utilizies edge-level and semantic-level attention -> HANConv
         Then, DyHAN leverages temporal-attention to combine node embeddings over time
-        It can be reconducted to DURENDAL, following aggregate-then-update schema:
+        It can be reconducted to a special instance of our framework, 
+        following aggregate-then-update schema:
             GNN Encoder: GAT
             Semantic Aggregation: Semantic Attention (HAN)
             Embedding update: Temporal Attention
@@ -485,7 +486,8 @@ class HTGNN(torch.nn.Module):
         HTGNN utilizies edge-level attention -> GAT
                         semantic-level attention -> HAN with attention coefficient following GATv2
                         positional encoding for temporal node embedding
-        It can be reconducted to DURENDAL, following aggregate-then-update schema:
+        It can be reconducted to a special instance of our framework,
+        following aggregate-then-update schema:
             GNN Encoder: GAT
             Semantic Aggregation: Semantic Attention (From GATv2)
             Embedding update: PE (PositionalEncoding) + Temporal Aggregation
@@ -594,7 +596,8 @@ class REGCN(torch.nn.Module):
             1b) Random inizialized learnable parameters
             1) concatenation between 1a and 1b
             2) Update over time using a GRU unit
-        It can be reconducted to DURENDAL, following aggregate-then-update schema:
+        It can be reconducted to a special instance of our framework,
+        following aggregate-then-update schema:
             GNN Encoder: GCN
             Semantic Aggregation: R-GCN aggregation
             Embedding update: Time-Gate / GRU
@@ -998,6 +1001,130 @@ class TNTComplEx(torch.nn.Module):
             h_dict[edge_t] = h
         
         return h_dict
+    
+    def loss(self, pred, link_label):
+        return self.loss_fn(pred, link_label)
+    
+#Below, an utility class to repurpose HAN, HGT and R-GCN into Temporal Heterogeneous GNNs.
+class HeteroToTemporal(torch.nn.Module):
+    """
+        Repurposing model for RGCN, HAN and HGT in our framework following the aggregate-then-update scheme
+    """
+    def __init__(self, in_channels, num_nodes, metadata, hidden_conv_1, hidden_conv_2, model='rgcn', upd='GRU'):
+        
+        super(HeteroToTemporal, self).__init__()
+        
+        if not isinstance(in_channels, dict):
+            in_channels = {node_type: in_channels for node_type in metadata[0]}
+        
+        edge_types = metadata[1]
+     
+        if model=='RGCN':
+            #RGCN is realized using GraphConv due to no heterogeneity-aware of GCNConv operator
+            #This choice was made according to this github thread https://github.com/pyg-team/pytorch_geometric/discussions/3479
+            self.conv1 = HeteroConv({edge_t: GraphConv((in_channels[edge_t[0]], in_channels[edge_t[2]]), hidden_conv_1, add_self_loops=False) for edge_t in edge_types}, aggr='sum')
+            self.conv2 = HeteroConv({edge_t: GraphConv((hidden_conv_1, hidden_conv_1), hidden_conv_2, add_self_loops=False) for edge_t in edge_types}, aggr='sum')
+        elif model=='HAN':
+            self.conv1 = HANConv(in_channels, hidden_conv_1, metadata)
+            self.conv2 = HANConv(hidden_conv_1, hidden_conv_2, metadata)
+        elif model=='HGT':
+            self.conv1 = HGTConv(in_channels, hidden_conv_1, metadata)
+            self.conv2 = HGTConv(hidden_conv_1, hidden_conv_2, metadata)
+        
+        if upd == 'GRU':
+            self.update1 = HetNodeUpdateGRU(hidden_conv_1, metadata)
+            self.update2 = HetNodeUpdateGRU(hidden_conv_2, metadata)
+        elif upd == 'MLP':
+            self.update1 = HetNodeUpdateMLP(hidden_conv_1, metadata)
+            self.update2 = HetNodeUpdateMLP(hidden_conv_2, metadata)
+        elif upd == 'PE':
+            self.update1 = HetNodeUpdatePE(hidden_conv_1, metadata)
+            self.update2 = HetNodeUpdatePE(hidden_conv_2, metadata)
+        elif upd == 'NO-UPD':
+            self.update1 = HetNodeUpdateFake(hidden_conv_1, metadata)
+            self.update2 = HetNodeUpdateFake(hidden_conv_1, metadata)
+        
+        self.post = Linear(hidden_conv_2, 2)
+        
+        #Initialize the loss function to BCEWithLogitsLoss
+        self.loss_fn = BCEWithLogitsLoss()
+        
+        self.past_out_dict_1 = None
+        self.past_out_dict_2 = None
+        
+        self.metadata = metadata
+        self.rel_emb = torch.nn.Parameter(torch.randn(len(metadata[1]), 2), requires_grad=True)
+        self.rel_to_index = {metapath:i for i,metapath in enumerate(metadata[1])}
+        
+        self.upd = upd
+        
+        self.reset_parameters()
+        
+    def reset_loss(self,loss=BCEWithLogitsLoss):
+        self.loss_fn = loss()
+    
+    def reset_parameters(self):
+        self.conv1.reset_parameters()
+        self.conv2.reset_parameters()
+        self.update1.reset_parameters()
+        self.update2.reset_parameters()
+        self.post.reset_parameters()
+    
+    def forward(self, x_dict, edge_index_dict, data, snap, past_out_dict_1=None, past_out_dict_2=None):
+        
+        if past_out_dict_1 is not None:
+            self.past_out_dict_1 = past_out_dict_1.copy()
+        if past_out_dict_2 is not None:
+            self.past_out_dict_2 = past_out_dict_2.copy()
+            
+        out_dict = self.conv1(x_dict, edge_index_dict)
+        if snap==0:
+            current_dict_1 = out_dict.copy()
+        else: 
+            current_dict_1 = out_dict.copy()
+            current_dict_1 = self.update1(out_dict, self.past_out_dict_1)
+        self.past_out_dict_1 = current_dict_1.copy()        
+        
+        out_dict = self.conv2(out_dict, edge_index_dict)
+        if snap==0:
+            current_dict_2 = out_dict.copy()
+        else:
+            current_dict_2 = out_dict.copy()
+            current_dict_2 = self.update2(out_dict, self.past_out_dict_2)
+        self.past_out_dict_2 = current_dict_2.copy()
+        out_dict_iter = out_dict.copy()
+        for node, h in out_dict_iter.items():
+            out_dict[node] = self.post(h)
+        
+        #ComplEx decoder
+        h_dict = dict()
+        for edge_t in self.metadata[1]:
+            edge_label_index = data[edge_t].edge_label_index
+            num_edges = len(edge_label_index)
+            
+            head = out_dict[edge_t[0]][edge_label_index[0]] #embedding src nodes
+            head_re_a = head[:,0]
+            head_im_a = head[:,1]
+            
+            tail = out_dict[edge_t[2]][edge_label_index[1]] #embedding dst nodes
+            tail_re_a = tail[:,0]
+            tail_im_a = tail[:,1]
+            
+            
+            reli = self.rel_to_index[edge_t]
+            rel = self.rel_emb[reli]
+            rel_re = rel[0]
+            rel_im = rel[1]
+            
+            #ComplEx score
+            h = torch.Tensor([triple_dot(head_re, rel_re, tail_re) +\
+                 triple_dot(head_im, rel_re, tail_im) +\
+                 triple_dot(head_re, rel_im, tail_im) -\
+                 triple_dot(head_im, rel_im, tail_re) for head_re, head_im, tail_re, tail_im in zip(head_re_a, head_im_a, tail_re_a, tail_im_a)])
+            
+            h_dict[edge_t] = h
+        
+        return h_dict, current_dict_1, current_dict_2
     
     def loss(self, pred, link_label):
         return self.loss_fn(pred, link_label)
