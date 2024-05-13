@@ -1,5 +1,5 @@
-# Durendal
-Graph deep learning framework for temporal heterogeneous networks.
+# Deep learning framework for temporal heterogeneous networks
+A discrete-time GNN-based deep learning framework for temporal heterogeneous networks forecasting.
 
 ## Table of Contents
 
@@ -12,9 +12,7 @@ Graph deep learning framework for temporal heterogeneous networks.
 
 ## General Information
 
-This repository contains additional material related to the work titled "DURENDAL: Graph deep learning framework for temporal heterogeneous network". 
-
-We summarize our main contributions as follows: 1) we propose a novel graph deep learning framework that allows an easy repurposing of any heterogenous GNNs to a dynamic setting; 2) we introduce two different update schemes for obtaining temporal heterogeneous node embeddings, highlighting their strengths and weaknesses and their practical use scenarios; and 3) we define some minimal requirements datasets must satisfy to be useful testing grounds for temporal heterogeneous graph learning models, extending the set of benchmarks for THNs by introducing two novel high-resolution THNs datasets.
+This repository contains additional material related to the work titled "A discrete-time deep learning framework for temporal heterogeneous networks forecasting".
 
 ## Repository organization
 This repository is organized as follows:
